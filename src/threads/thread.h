@@ -11,7 +11,8 @@ enum thread_status
     THREAD_RUNNING,     /**< Running thread. */
     THREAD_READY,       /**< Not running but ready to run. */
     THREAD_BLOCKED,     /**< Waiting for an event to trigger. */
-    THREAD_DYING        /**< About to be destroyed. */
+    THREAD_DYING,        /**< About to be destroyed. */
+    THREAD_SLEEP        /**< Sleeping thread. */
   };
 
 /** Thread identifier type.
@@ -100,6 +101,7 @@ struct thread
 
     /* Owned by thread.c. */
     unsigned magic;                     /**< Detects stack overflow. */
+    int64_t wake_time;                  /**< Time when thread can wake. */
   };
 
 /** If false (default), use round-robin scheduler.
@@ -109,7 +111,7 @@ extern bool thread_mlfqs;
 
 void thread_init (void);
 void thread_start (void);
-
+bool prio_cmp_fun(struct list_elem *elem_i,struct list_elem *elem_o,void *aux);
 void thread_tick (void);
 void thread_print_stats (void);
 
@@ -137,5 +139,7 @@ int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
+
+void thread_sleep(int64_t ticks);
 
 #endif /**< threads/thread.h */

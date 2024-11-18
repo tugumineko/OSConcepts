@@ -71,6 +71,15 @@ static void schedule (void);
 void thread_schedule_tail (struct thread *prev);
 static tid_t allocate_tid (void);
 
+bool 
+prio_cmp_fun(struct list_elem *elem_i,struct list_elem *elem_o,void *aux){
+  struct thread *thread_i = list_entry(elem_i,struct thread,elem);
+  struct thread *thread_o = list_entry(elem_o,struct thread,elem);
+
+  return thread_i -> priority > thread_o -> priority;
+
+}
+
 /** Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
    general and it is possible in this case only because loader.S
@@ -237,7 +246,7 @@ thread_unblock (struct thread *t)
 
   old_level = intr_disable ();
   ASSERT (t->status == THREAD_BLOCKED);
-  list_push_back (&ready_list, &t->elem);
+  list_insert_ordered (&ready_list, &t->elem,&prio_cmp_fun,NULL);
   t->status = THREAD_READY;
   intr_set_level (old_level);
 }
@@ -308,7 +317,10 @@ thread_yield (void)
 
   old_level = intr_disable ();
   if (cur != idle_thread) 
-    list_push_back (&ready_list, &cur->elem);
+    list_insert_ordered (&ready_list, &cur->elem,&prio_cmp_fun,NULL);
+  
+  printf("Yield: thread %s at tick %d.\n",cur->name,timer_ticks());
+  
   cur->status = THREAD_READY;
   schedule ();
   intr_set_level (old_level);
@@ -465,7 +477,7 @@ init_thread (struct thread *t, const char *name, int priority)
   t->magic = THREAD_MAGIC;
 
   old_level = intr_disable ();
-  list_push_back (&all_list, &t->allelem);
+  list_insert_ordered (&all_list, &t->allelem,&prio_cmp_fun,NULL);
   intr_set_level (old_level);
 }
 
@@ -582,3 +594,72 @@ allocate_tid (void)
 /** Offset of `stack' member within `struct thread'.
    Used by switch.S, which can't figure it out on its own. */
 uint32_t thread_stack_ofs = offsetof (struct thread, stack);
+
+/* Replace the timer_sleep() in timer.c 
+   Set the wake time, status of the cur_thread,
+and make it fall asleep.
+*/
+void thread_sleep (int64_t ticks){
+  if(ticks <= 0)return;
+  struct thread *cur = thread_current();
+
+  enum intr_level old_level = intr_disable();
+  //critical_section
+  if(cur!=idle_thread){
+    cur->status = THREAD_SLEEP;
+    cur->wake_time = timer_ticks() + ticks;
+    schedule();
+  }
+  //critical section end
+  intr_set_level(old_level);
+}
+
+/* Check all threads, if a  sleep thread can wake up,  
+then wake it up and put it into ready list.
+*/
+void check_and_wakeup_sleep_thread(void) {
+  struct list_elem *e = list_begin(&all_list); 
+  int64_t cur_ticks = timer_ticks();
+
+  while (e != list_end(&all_list)) {
+    struct thread *t = list_entry(e, struct thread, allelem);
+    struct list_elem *next = list_next(e); 
+    enum intr_level old_level = intr_disable(); 
+
+    if (t->status == THREAD_SLEEP && cur_ticks >= t->wake_time) {
+      t->status = THREAD_READY;
+      list_insert_ordered(&ready_list, &t->elem, &prio_cmp_fun, NULL); 
+      printf("Wake up thread %s at tick %ld.\n", t->name, cur_ticks);
+    }
+
+    e = next; 
+    intr_set_level(old_level); 
+  }
+
+  // 模拟当多个线程运行时，先运行用时较短的程序
+  if (!list_empty(&ready_list)) {
+    struct list temp_queue;
+    list_init(&temp_queue);
+
+  if(list_size(&ready_list)>1){
+      printf("Simulating threads at tick %ld:\n", cur_ticks);
+
+    while (!list_empty(&ready_list)) {
+      struct list_elem *elem = list_pop_front(&ready_list);
+      list_push_back(&temp_queue, elem);
+    }
+
+    while (!list_empty(&temp_queue)) {
+      struct list_elem *ready_e = list_pop_front(&temp_queue); 
+      struct thread *t = list_entry(ready_e, struct thread, elem);
+
+      t->status = THREAD_RUNNING; 
+      int duration = ((PRI_MAX - t->priority)+1)*10;
+      printf("Running thread %s with duration %d.\n", t->name, duration);
+
+      t->status = THREAD_READY; 
+      list_insert_ordered(&ready_list, &t->elem, &prio_cmp_fun, NULL);
+    }
+  }
+  }
+}
